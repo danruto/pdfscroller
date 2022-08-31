@@ -1,5 +1,5 @@
 # Description
-Quick and dirty PDF reader with auto scrolling
+Quick and dirty PDF image reader with auto scrolling
 
 # Installation
 ## Locally
@@ -21,11 +21,13 @@ pdfscroller <file.pdf>
 
 # Keybinds
 ```
-j: Decrement speed by 0.2
-k: Increment speed by 0.2
-h: Decrement speed by 1.0
-l: Increment speed by 1.0
+j: Decrement speed by 1.0
+k: Increment speed by 1.0
+h: Decrement speed by 40.0
+l: Increment speed by 40.0
 s: Pause scrolling
 p: Jump to previous page
 n: Jump to next page
+u: Zoom in by 0.1
+d: Zoom out by 0.1
 ```
