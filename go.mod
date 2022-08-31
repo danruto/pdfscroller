@@ -1,4 +1,4 @@
-module github.com/pixelbrush/pdfscroller
+module github.com/danruto/pdfscroller
 
 go 1.19
 
