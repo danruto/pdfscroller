@@ -7,7 +7,6 @@ import (
 	_ "image/jpeg"
 	"io"
 	"io/ioutil"
-	"log"
 	"math"
 	"os"
 	"reflect"
@@ -16,6 +15,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	pdfapi "github.com/pdfcpu/pdfcpu/pkg/api"
+	"github.com/rs/zerolog/log"
 )
 
 const (
@@ -27,13 +27,13 @@ const (
 func NewImageFromReader(read io.Reader) *image.Image {
 	data, err := ioutil.ReadAll(read)
 	if err != nil {
-		log.Println("Unable to read image", err)
+		log.Error().Err(err).Str("function", "NewImageFromReader").Msg("Unable to read image")
 		return nil
 	}
 
 	ret, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
-		log.Println("Unable to read image", err)
+		log.Error().Err(err).Str("function", "NewImageFromReader").Msg("Unable to read image")
 		return nil
 	}
 
@@ -45,88 +45,12 @@ type GamePage struct {
 	y        float64
 }
 
-// TODO: Refactor, logic is coupled to both items in window
-// therefore, it shouldn't be hooked up to a per-page function
-func (page *GamePage) update(g *Game) {
-	if page != nil {
-		y := page.y
-		// Y is inverted, so get the absolute value for our calculation
-		absY := math.Abs(page.y)
-		maxY := float64(g.images[page.position].Bounds().Size().Y)
-
-		bounds := maxY - screenHeight
-
-		scroll := true
-
-		if g.speed > 0 {
-			if absY >= maxY {
-				// Shift pages left when we have finished reading the first page
-				g.pages[0] = g.pages[1]
-				g.pages[1] = nil
-				log.Println(fmt.Sprintf("[Update] Shifting pages left because absY: %0.2f, maxY: %0.2f, page: %v", absY, maxY, g.pages[0]))
-			} else if absY >= bounds {
-				// If our y is approximately at the border of the next image, we render 2 images
-				nextPosition := page.position + 1
-				if g.pages[1] == nil && nextPosition < g.maxImages {
-					g.pages[1] = &GamePage{
-						y:        math.Min(screenHeight, float64(g.images[nextPosition].Bounds().Size().Y)),
-						position: nextPosition,
-					}
-					log.Println(fmt.Sprintf("[Update] Adding new page at %d of %d because absY: %0.2f, maxY: %0.2f, bounds: %0.2f", nextPosition+1, g.maxImages, absY, maxY, bounds))
-				} else if page.position == g.maxImages-1 && (absY+screenHeight) >= maxY {
-					// If we have finished reading the pdf, then stop scrolling
-					scroll = false
-					log.Println("[Update] Scroll paused. Trying to scroll after last page")
-				}
-			}
-		} else if g.speed < 0 {
-			// log.Println(fmt.Sprintf("[Update] Speed: %0.2f, absY: %0.2f, page: %v, page1: %v, sh: %d", g.speed, absY, page, g.pages[1], screenHeight))
-
-			newPosition := page.position - 1
-
-			if g.pages[1] != nil && g.pages[1].y >= screenHeight {
-				log.Println(fmt.Sprintf("[Update] Shifting last page off stack %v", g.pages[1].position))
-				// Clear out the "next" page once it has been scrolled off page
-				g.pages[1] = nil
-			} else if y == 0 && newPosition >= 0 {
-				log.Println(fmt.Sprintf("[Update Start] Shifting pages right because absY: %0.2f, pageY: %0.2f, p0: %v, p1: %v", absY, page.y, g.pages[0], g.pages[1]))
-				// Shift pages right when we are scrolling backwards and have hit the top of the page
-				g.pages[1] = g.pages[0]
-				g.pages[1].y = 0
-
-				g.pages[0] = &GamePage{
-					y:        -float64(g.images[newPosition].Bounds().Size().Y),
-					position: newPosition,
-				}
-				log.Println(fmt.Sprintf("[Update End] Shifting pages right because absY: %0.2f, pageY: %0.2f, p0: %v, p1: %v", absY, page.y, g.pages[0], g.pages[1]))
-			} else if y <= 0 && newPosition < 0 && g.pages[1] == nil {
-				if absY < screenHeight {
-					// Clamp y if the scroll speed was too high
-					g.pages[0].y = 0
-
-					// We have reached the top of the first page
-					scroll = false
-
-					log.Println("[Update] Scroll paused. Trying to scroll before first page")
-				}
-			}
-		} else {
-			// If our speed is 0, we don't scroll
-			scroll = false
-		}
-
-		if scroll {
-			page.y -= g.speed
-		}
-	}
-}
-
 func (page *GamePage) draw(g *Game, screen *ebiten.Image) {
 	if page != nil {
 		width, _ := g.images[page.position].Size()
 		op := &ebiten.DrawImageOptions{}
 		op.GeoM.Scale(g.zoom, g.zoom)
-		op.GeoM.Translate(float64(screenWidth/2-(float64(width)*g.zoom)/2), page.y)
+		op.GeoM.Translate(float64(screenWidth/2-(float64(width)*g.zoom)/2), page.y*g.zoom)
 		screen.DrawImage(g.images[page.position], op)
 	}
 }
@@ -140,6 +64,9 @@ type Game struct {
 
 	// Window of pages to render, only a maximum of 2
 	pages [2]*GamePage
+
+	// DEBUG
+	update bool
 }
 
 func cacheImages(f *os.File, pageSelections []string, offset int64) ([]*ebiten.Image, error) {
@@ -147,7 +74,7 @@ func cacheImages(f *os.File, pageSelections []string, offset int64) ([]*ebiten.I
 	if err != nil {
 		return nil, err
 	}
-	log.Println(fmt.Sprintf("[ExtractImagesRaw]: found %d images", len(images)))
+	log.Debug().Str("function", "cacheImages").Msg(fmt.Sprintf("found %d images", len(images)))
 
 	var gameImages = make([]*ebiten.Image, len(pageSelections))
 	for _, image := range images {
@@ -155,10 +82,15 @@ func cacheImages(f *os.File, pageSelections []string, offset int64) ([]*ebiten.I
 		img := NewImageFromReader(image.Reader)
 
 		gameImages[v.Int()-1-offset] = ebiten.NewImageFromImage(*img)
-		log.Println(fmt.Sprintf("[ExtractImagesRaw] Page Number: %v, Inserting into position: %d", v, v.Int()-1-offset))
+
+		log.Debug().
+			Str("function", "cacheImages").
+			Int64("pageNr", v.Int()).
+			Int64("offset", offset).
+			Msg(fmt.Sprintf("Inserting into position: %d", v.Int()-1-offset))
 	}
 
-	log.Println(fmt.Sprintf("[ExtractImagesRaw] appended %d images", len(gameImages)))
+	log.Debug().Str("function", "cacheImages").Msg(fmt.Sprintf("appended %d images", len(gameImages)))
 	return gameImages, nil
 }
 
@@ -177,7 +109,9 @@ func (g *Game) CacheImages() {
 			pageSelections[ii] = fmt.Sprintf("%d", ii+offset+1)
 			ii += 1
 		}
-		log.Println(fmt.Sprintf("[Goroutine] Skipped: 2, Remaining Size: %d, Page selections: %v", remainingSize, pageSelections))
+
+		log.Debug().Str("function", "CacheImages").Msg(fmt.Sprintf("Skipped: %d, Remaining Size: %d, Page selections: %v", offset, remainingSize, pageSelections))
+
 		images, err := cacheImages(g.file, pageSelections, int64(offset))
 		if err != nil {
 			return err
@@ -199,7 +133,7 @@ func NewGame(filename string) (*Game, error) {
 	if err != nil {
 		return nil, err
 	}
-	log.Println(fmt.Sprintf("[NewGame] PageCount: %d", imageCount))
+	log.Debug().Str("function", "NewGame").Msg(fmt.Sprintf("PageCount: %d", imageCount))
 
 	images, err := cacheImages(f, []string{"1", "2"}, 0)
 	if err != nil {
@@ -219,6 +153,8 @@ func NewGame(filename string) (*Game, error) {
 			},
 			nil,
 		},
+
+		update: true,
 	}
 
 	return g, nil
@@ -249,7 +185,14 @@ func (g *Game) handleKeys() {
 		// Find the position of previous
 		newPosition := g.pages[0].position - 1
 		if newPosition >= 0 {
-			log.Println(fmt.Sprintf("[Input] Previous page requested, P0: %d, New: %d", g.pages[0].position, newPosition))
+			log.
+				Debug().
+				Str("function", "handleKeys").
+				Int("prevPosition", g.pages[0].position).
+				Int("newPosition", newPosition).
+				Int("maxImages", g.maxImages).
+				Msg("Previous page requested")
+
 			g.pages[0] = &GamePage{
 				y:        0,
 				position: newPosition,
@@ -269,7 +212,14 @@ func (g *Game) handleKeys() {
 		}
 
 		if newPosition < g.maxImages {
-			log.Println(fmt.Sprintf("[Input] Next page requested, P0: %d, P1: %v, New: %d", g.pages[0].position, g.pages[1], newPosition))
+			log.
+				Debug().
+				Str("function", "handleKeys").
+				Int("prevPosition", g.pages[0].position).
+				Int("newPosition", newPosition).
+				Int("maxImages", g.maxImages).
+				Msg("Next page requested")
+
 			g.pages[0] = &GamePage{
 				y:        0,
 				position: newPosition,
@@ -285,24 +235,169 @@ func (g *Game) handleKeys() {
 	if inpututil.IsKeyJustPressed(ebiten.KeyD) {
 		g.zoom -= 0.1
 	}
+
+	if inpututil.IsKeyJustPressed(ebiten.KeyW) {
+		g.update = true
+	}
+
+	if inpututil.IsKeyJustPressed(ebiten.KeyE) {
+		g.update = false
+	}
+}
+
+func (g *Game) handleMouseInputs() {
 }
 
 func (g *Game) Update() error {
-	for _, page := range g.pages {
-		page.update(g)
+
+	// Handle any key presses
+	g.handleKeys()
+
+	// Handle any mouse actions
+	g.handleMouseInputs()
+
+	// Don't update if our speed is 0
+	if g.speed == 0 {
+		return nil
 	}
 
-	g.handleKeys()
+	pageOne := g.pages[0]
+	pageTwo := g.pages[1]
+
+	// TODO: Handle g.images when we are still loading
+	// TODO: Handle zoom calculations
+
+	// We should always have a pageOne, if we don't panic
+	if pageOne == nil {
+		panic("Page One is somehow empty. Unrecoverable error.")
+	}
+
+	// Setup specific page values
+	pageOneHeight := g.images[pageOne.position].Bounds().Size().Y
+	pageOneYAbs := math.Abs(pageOne.y)
+	pageTwoHeight := 0
+	if pageTwo != nil {
+		pageTwoHeight = g.images[pageTwo.position].Bounds().Size().Y
+	}
+
+	// Setup some common values to use for our calculations
+	scroll := true
+
+	if g.speed > 0 {
+		if pageOneYAbs >= float64(pageOneHeight) {
+			// Shift pageTwo into pageOne when we have finished reading pageOne
+			g.pages[0] = pageTwo
+			g.pages[1] = nil
+
+			log.
+				Debug().
+				Str("function", "Update").
+				Float64("speed", g.speed).
+				Float64("pageOneYAbs", pageOneYAbs).
+				Int("pageOneHeight", pageOneHeight).
+				Msg("Shifted pageTwo into pageOne")
+		} else if pageOneYAbs >= float64(pageOneHeight-screenHeight) {
+			// Pre-load the next image if we are getting close to it which we define as one 'screenHeight' away, assuming pageHeight > screenHeight
+			nextPosition := pageOne.position + 1
+
+			// Only try and continue if the next position is valid and we haven't already set a next page
+			// We shift out pageTwo in the above condition so we know we can gate it by nil
+			if pageTwo == nil && nextPosition < g.maxImages {
+				// Start the new page just underneath the current page i.e.
+				// at +screenHeight
+				g.pages[1] = &GamePage{
+					// y:        float64(g.images[nextPosition].Bounds().Size().Y),
+					y:        screenHeight,
+					position: nextPosition,
+				}
+
+				g.update = false
+
+				log.
+					Debug().
+					Str("function", "Update").
+					Float64("speed", g.speed).
+					Int("nextPosition", nextPosition).
+					Int("maxImages", g.maxImages).
+					Float64("pageOneYAbs", pageOneYAbs).
+					Float64("bounds", float64(pageOneHeight-screenHeight)).
+					Msg("Appending a new page to the bottom as we have hit the boundary")
+			} else if nextPosition == g.maxImages && pageOneYAbs+screenHeight >= float64(pageOneHeight) {
+				scroll = false
+
+				log.
+					Debug().
+					Str("function", "Update").
+					Float64("speed", g.speed).
+					Int("nextPosition", nextPosition).
+					Int("maxImages", g.maxImages).
+					Float64("pageOneYAbs", pageOneYAbs).
+					Int("screenHeight", screenHeight).
+					Int("pageOneHeight", pageOneHeight).
+					Msg("Reached the end of the pdf")
+			}
+		}
+
+	} else {
+		prevPosition := pageOne.position - 1
+
+		if pageTwo != nil && pageTwo.y > screenHeight {
+			g.pages[1] = nil
+
+			log.Debug().
+				Str("function", "Update").
+				Float64("speed", g.speed).
+				Float64("pageOneY", pageOne.y).
+				Float64("pageTwoY", pageTwo.y).
+				Int("pageTwoHeight", pageTwoHeight).
+				Int("screenHeight", screenHeight).
+				Msg("PageTwo is offscreen, removing it")
+		} else if (pageOneYAbs == 0 || pageOne.y >= 0) && prevPosition >= 0 {
+			g.pages[1] = pageOne
+			g.pages[1].y = 0
+
+			g.pages[0] = &GamePage{
+				y:        -float64(g.images[prevPosition].Bounds().Size().Y),
+				position: prevPosition,
+			}
+
+			log.Debug().
+				Str("function", "Update").
+				Float64("speed", g.speed).
+				Float64("pageOneY", pageOne.y).
+				Int("prevPosition", prevPosition).
+				Msg("Shifting pageOne to pageTwo as we have hit the top of the page")
+		} else if (pageOneYAbs == 0 || pageOne.y > 0) && prevPosition < 0 && pageTwo == nil {
+			// We have reached the top of the first page
+			// Clamp to 0 in case of overscroll
+			ppy := g.pages[0].y
+			g.pages[0].y = 0
+
+			// Disable scrolling
+			scroll = false
+
+			log.Debug().
+				Str("function", "Update").
+				Float64("speed", g.speed).
+				Float64("pageOneYAbs", pageOneYAbs).
+				Float64("pageOneY", ppy).
+				Bool("pageTwo exists?", pageTwo != nil).
+				Int("prevPosition", prevPosition).
+				Msg("We have reached the top of the first page. Clamping and disabling scroll.")
+		}
+	}
+
+	if scroll {
+		pageOne.y -= g.speed
+		if pageTwo != nil {
+			pageTwo.y -= g.speed
+		}
+	}
 
 	return nil
 }
 
-func (g *Game) Draw(screen *ebiten.Image) {
-	// Only render the image window based on the y and position
-	for _, page := range g.pages {
-		page.draw(g, screen)
-	}
-
+func (g *Game) drawDebug(screen *ebiten.Image) {
 	position := 0
 	// Positive speed means we take the highest position
 	// Negative means we take the lowest position
@@ -316,7 +411,33 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		position = g.pages[0].position + 1
 	}
 
-	ebitenutil.DebugPrint(screen, fmt.Sprintf("Page: %d of %d (Loaded: %d), Speed: %0.2f, Zoom: %0.2f, TPS: %0.2f", position, g.maxImages, len(g.images), g.speed, g.zoom, ebiten.CurrentTPS()))
+	pageTwoY := 0.
+	pageTwo := g.pages[1]
+	if pageTwo != nil {
+		pageTwoY = pageTwo.y
+	}
+
+	ebitenutil.DebugPrint(
+		screen,
+		fmt.Sprintf("Page: %d of %d (Loaded: %d), Speed: %0.2f, Zoom: %0.2f, PageOne: %0.2f, PageTwo: %0.2f, TPS: %0.2f",
+			position,
+			g.maxImages,
+			len(g.images),
+			g.speed,
+			g.zoom,
+			g.pages[0].y,
+			pageTwoY,
+			ebiten.CurrentTPS(),
+		),
+	)
+}
+
+func (g *Game) Draw(screen *ebiten.Image) {
+	for _, page := range g.pages {
+		page.draw(g, screen)
+	}
+
+	g.drawDebug(screen)
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {

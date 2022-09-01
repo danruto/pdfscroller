@@ -5,6 +5,7 @@ go 1.19
 require (
 	github.com/hajimehoshi/ebiten/v2 v2.3.8
 	github.com/pdfcpu/pdfcpu v0.3.13
+	github.com/rs/zerolog v1.28.0
 )
 
 require (
@@ -13,6 +14,8 @@ require (
 	github.com/hhrutter/lzw v0.0.0-20190829144645-6f07a24e8650 // indirect
 	github.com/hhrutter/tiff v0.0.0-20190829141212-736cae8d0bc7 // indirect
 	github.com/jezek/xgb v1.0.0 // indirect
+	github.com/mattn/go-colorable v0.1.12 // indirect
+	github.com/mattn/go-isatty v0.0.14 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	golang.org/x/exp v0.0.0-20200224162631-6cc2880d07d6 // indirect
 	golang.org/x/image v0.0.0-20220601225756-64ec528b34cd // indirect

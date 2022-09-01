@@ -11,7 +11,7 @@ go install .
 
 ## Remote
 ```sh
-go install github.com/danruto/pdfscroller@latest
+go install github.com/danruto/pdfscroller@main
 ```
 
 # Usage
