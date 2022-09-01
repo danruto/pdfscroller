@@ -273,18 +273,21 @@ func (g *Game) Update() error {
 	}
 
 	// Setup specific page values
-	pageOneHeight := g.images[pageOne.position].Bounds().Size().Y
-	pageOneYAbs := math.Abs(pageOne.y)
-	pageTwoHeight := 0
+	pageOneHeight := float64(g.images[pageOne.position].Bounds().Size().Y)
+	pageOneY := pageOne.y
+	pageOneYAbs := math.Abs(pageOneY)
+	pageTwoHeight := 0.
+	pageTwoY := 0.
 	if pageTwo != nil {
-		pageTwoHeight = g.images[pageTwo.position].Bounds().Size().Y
+		pageTwoHeight = float64(g.images[pageTwo.position].Bounds().Size().Y)
+		pageTwoY = pageTwo.y
 	}
 
 	// Setup some common values to use for our calculations
 	scroll := true
 
 	if g.speed > 0 {
-		if pageOneYAbs >= float64(pageOneHeight) {
+		if pageOneYAbs >= pageOneHeight {
 			// Shift pageTwo into pageOne when we have finished reading pageOne
 			g.pages[0] = pageTwo
 			g.pages[1] = nil
@@ -294,7 +297,7 @@ func (g *Game) Update() error {
 				Str("function", "Update").
 				Float64("speed", g.speed).
 				Float64("pageOneYAbs", pageOneYAbs).
-				Int("pageOneHeight", pageOneHeight).
+				Float64("pageOneHeight", pageOneHeight).
 				Msg("Shifted pageTwo into pageOne")
 		} else if pageOneYAbs >= float64(pageOneHeight-screenHeight) {
 			// Pre-load the next image if we are getting close to it which we define as one 'screenHeight' away, assuming pageHeight > screenHeight
@@ -305,13 +308,16 @@ func (g *Game) Update() error {
 			if pageTwo == nil && nextPosition < g.maxImages {
 				// Start the new page just underneath the current page i.e.
 				// at +screenHeight
+				delta := 0.
+				if g.zoom != 1.0 {
+					delta = (1 - g.zoom) * screenHeight
+				}
+				// TODO: Account for scroll velocity
 				g.pages[1] = &GamePage{
 					// y:        float64(g.images[nextPosition].Bounds().Size().Y),
-					y:        screenHeight,
+					y:        screenHeight + delta,
 					position: nextPosition,
 				}
-
-				g.update = false
 
 				log.
 					Debug().
@@ -321,6 +327,7 @@ func (g *Game) Update() error {
 					Int("maxImages", g.maxImages).
 					Float64("pageOneYAbs", pageOneYAbs).
 					Float64("bounds", float64(pageOneHeight-screenHeight)).
+					Float64("delta", delta).
 					Msg("Appending a new page to the bottom as we have hit the boundary")
 			} else if nextPosition == g.maxImages && pageOneYAbs+screenHeight >= float64(pageOneHeight) {
 				scroll = false
@@ -333,7 +340,7 @@ func (g *Game) Update() error {
 					Int("maxImages", g.maxImages).
 					Float64("pageOneYAbs", pageOneYAbs).
 					Int("screenHeight", screenHeight).
-					Int("pageOneHeight", pageOneHeight).
+					Float64("pageOneHeight", pageOneHeight).
 					Msg("Reached the end of the pdf")
 			}
 		}
@@ -341,36 +348,42 @@ func (g *Game) Update() error {
 	} else {
 		prevPosition := pageOne.position - 1
 
-		if pageTwo != nil && pageTwo.y > screenHeight {
+		if pageTwo != nil && pageTwoY > screenHeight {
 			g.pages[1] = nil
 
 			log.Debug().
 				Str("function", "Update").
 				Float64("speed", g.speed).
-				Float64("pageOneY", pageOne.y).
-				Float64("pageTwoY", pageTwo.y).
-				Int("pageTwoHeight", pageTwoHeight).
+				Float64("pageOneY", pageOneY).
+				Float64("pageTwoY", pageTwoY).
+				Float64("pageTwoHeight", pageTwoHeight).
 				Int("screenHeight", screenHeight).
 				Msg("PageTwo is offscreen, removing it")
-		} else if (pageOneYAbs == 0 || pageOne.y >= 0) && prevPosition >= 0 {
+		} else if (pageOneYAbs == 0 || pageOneY >= 0) && prevPosition >= 0 {
 			g.pages[1] = pageOne
 			g.pages[1].y = 0
 
+			delta := 0.
+			if g.zoom != 1.0 {
+				delta = (1 - g.zoom) * screenHeight
+			}
+			// TODO: Account for scroll velocity
 			g.pages[0] = &GamePage{
-				y:        -float64(g.images[prevPosition].Bounds().Size().Y),
+				y:        -float64(g.images[prevPosition].Bounds().Size().Y) - delta,
 				position: prevPosition,
 			}
 
 			log.Debug().
 				Str("function", "Update").
 				Float64("speed", g.speed).
-				Float64("pageOneY", pageOne.y).
+				Float64("pageOneY", pageOneY).
 				Int("prevPosition", prevPosition).
+				Float64("delta", delta).
 				Msg("Shifting pageOne to pageTwo as we have hit the top of the page")
-		} else if (pageOneYAbs == 0 || pageOne.y > 0) && prevPosition < 0 && pageTwo == nil {
+		} else if (pageOneYAbs == 0 || pageOneY > 0) && prevPosition < 0 && pageTwo == nil {
 			// We have reached the top of the first page
 			// Clamp to 0 in case of overscroll
-			ppy := g.pages[0].y
+			originalPageOneY := pageOneY
 			g.pages[0].y = 0
 
 			// Disable scrolling
@@ -380,7 +393,7 @@ func (g *Game) Update() error {
 				Str("function", "Update").
 				Float64("speed", g.speed).
 				Float64("pageOneYAbs", pageOneYAbs).
-				Float64("pageOneY", ppy).
+				Float64("pageOneY", originalPageOneY).
 				Bool("pageTwo exists?", pageTwo != nil).
 				Int("prevPosition", prevPosition).
 				Msg("We have reached the top of the first page. Clamping and disabling scroll.")
@@ -441,5 +454,13 @@ func (g *Game) Draw(screen *ebiten.Image) {
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
+	log.
+		Info().
+		Str("function", "Layout").
+		Int("outsideWidth", outsideWidth).
+		Int("outsideHeight", outsideHeight).
+		Int("screenWidth", screenWidth).
+		Int("screenHeight", screenHeight).
+		Msg("Called layout")
 	return screenWidth, screenHeight
 }

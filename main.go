@@ -11,7 +11,8 @@ import (
 )
 
 func main() {
-	zerolog.SetGlobalLevel(zerolog.TraceLevel)
+	zerolog.SetGlobalLevel(zerolog.WarnLevel)
+
 	log.Trace().Str("function", "main").Msg("Started PDFScroller")
 
 	args := os.Args[1:]
@@ -19,7 +20,7 @@ func main() {
 
 	ebiten.SetWindowSize(screenWidth, screenHeight)
 	ebiten.SetWindowTitle("PDFScroller")
-	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
+	// ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 
 	g, err := NewGame(args[0])
 	if err != nil {
