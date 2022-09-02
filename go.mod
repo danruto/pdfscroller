@@ -4,6 +4,7 @@ go 1.19
 
 require (
 	github.com/hajimehoshi/ebiten/v2 v2.3.8
+	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
 	github.com/pdfcpu/pdfcpu v0.3.13
 	github.com/rs/zerolog v1.28.0
 )

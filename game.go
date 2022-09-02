@@ -14,6 +14,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
+	"github.com/nfnt/resize"
 	pdfapi "github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/rs/zerolog/log"
 )
@@ -24,7 +25,7 @@ const (
 )
 
 // NewImageFromReader creates a new image from a data stream.
-func NewImageFromReader(read io.Reader) *image.Image {
+func NewImageFromReader(read io.Reader) image.Image {
 	data, err := ioutil.ReadAll(read)
 	if err != nil {
 		log.Error().Err(err).Str("function", "NewImageFromReader").Msg("Unable to read image")
@@ -37,7 +38,7 @@ func NewImageFromReader(read io.Reader) *image.Image {
 		return nil
 	}
 
-	return &ret
+	return ret
 }
 
 type GamePage struct {
@@ -51,19 +52,22 @@ func (page *GamePage) draw(g *Game, screen *ebiten.Image) {
 		op := &ebiten.DrawImageOptions{}
 		op.GeoM.Scale(g.zoom, g.zoom)
 		op.GeoM.Translate(float64(screenWidth/2-(float64(width)*g.zoom)/2), page.y*g.zoom)
-		screen.DrawImage(g.images[page.position], op)
+		img := g.images[page.position]
+		screen.DrawImage(img, op)
 	}
 }
 
 type Game struct {
 	file      *os.File
+	offset    int
 	maxImages int
 	images    []*ebiten.Image
 	speed     float64
 	zoom      float64
 
 	// Window of pages to render, only a maximum of 2
-	pages [2]*GamePage
+	pages   [2]*GamePage
+	cacheCh chan []*ebiten.Image
 
 	// DEBUG
 	update bool
@@ -80,8 +84,21 @@ func cacheImages(f *os.File, pageSelections []string, offset int64) ([]*ebiten.I
 	for _, image := range images {
 		v := reflect.ValueOf(image).FieldByName("pageNr")
 		img := NewImageFromReader(image.Reader)
+		// TODO: Read this from lib instead somehow
+		maxHeight := 16382
+		width := img.Bounds().Size().X
+		height := img.Bounds().Size().Y
 
-		gameImages[v.Int()-1-offset] = ebiten.NewImageFromImage(*img)
+		if height > maxHeight {
+			// Find the scale to keep aspect ratio
+			scale := float64(height / maxHeight)
+
+			scaledWidth := uint(math.Ceil(float64(width) * scale))
+
+			img = resize.Resize(scaledWidth, uint(maxHeight), img, resize.NearestNeighbor)
+		}
+
+		gameImages[v.Int()-1-offset] = ebiten.NewImageFromImage(img)
 
 		log.Debug().
 			Str("function", "cacheImages").
@@ -95,8 +112,7 @@ func cacheImages(f *os.File, pageSelections []string, offset int64) ([]*ebiten.I
 }
 
 func (g *Game) CacheImages() {
-	offset := 2
-	remainingSize := g.maxImages - offset
+	remainingSize := g.maxImages - g.offset
 	if remainingSize < 0 {
 		remainingSize = 0
 	}
@@ -106,19 +122,22 @@ func (g *Game) CacheImages() {
 		ii := 0
 		for ii < remainingSize {
 			// Skip 2 which we already know we have fetched and then add 1 more to make it a 1-based index
-			pageSelections[ii] = fmt.Sprintf("%d", ii+offset+1)
+			pageSelections[ii] = fmt.Sprintf("%d", ii+g.offset+1)
 			ii += 1
 		}
 
-		log.Debug().Str("function", "CacheImages").Msg(fmt.Sprintf("Skipped: %d, Remaining Size: %d, Page selections: %v", offset, remainingSize, pageSelections))
+		log.Debug().Str("function", "CacheImages").Msg(fmt.Sprintf("Skipped: %d, Remaining Size: %d, Page selections: %v", g.offset, remainingSize, pageSelections))
 
-		images, err := cacheImages(g.file, pageSelections, int64(offset))
+		images, err := cacheImages(g.file, pageSelections, int64(g.offset))
 		if err != nil {
 			return err
 		}
+
 		// TODO: We can chunk this further but for now it's fine. By the time we read 2 pages,
 		// it should have been enough time to load the rest
-		g.images = append(g.images, images...)
+		g.cacheCh <- images
+		close(g.cacheCh)
+
 		return nil
 	}(g, remainingSize)
 }
@@ -135,13 +154,15 @@ func NewGame(filename string) (*Game, error) {
 	}
 	log.Debug().Str("function", "NewGame").Msg(fmt.Sprintf("PageCount: %d", imageCount))
 
-	images, err := cacheImages(f, []string{"1", "2"}, 0)
+	initialPageSelection := []string{"1", "2"}
+	images, err := cacheImages(f, initialPageSelection, 0)
 	if err != nil {
 		return nil, err
 	}
 
 	g := &Game{
 		file:      f,
+		offset:    len(initialPageSelection),
 		maxImages: imageCount,
 		images:    images,
 		speed:     0.0,
@@ -153,6 +174,7 @@ func NewGame(filename string) (*Game, error) {
 			},
 			nil,
 		},
+		cacheCh: make(chan []*ebiten.Image, imageCount-len(initialPageSelection)),
 
 		update: true,
 	}
@@ -250,6 +272,12 @@ func (g *Game) handleMouseInputs() {
 
 func (g *Game) Update() error {
 
+	select {
+	case images := <-g.cacheCh:
+		g.images = append(g.images, images...)
+	default:
+	}
+
 	// Handle any key presses
 	g.handleKeys()
 
@@ -265,7 +293,6 @@ func (g *Game) Update() error {
 	pageTwo := g.pages[1]
 
 	// TODO: Handle g.images when we are still loading
-	// TODO: Handle zoom calculations
 
 	// We should always have a pageOne, if we don't panic
 	if pageOne == nil {
