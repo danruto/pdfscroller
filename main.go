@@ -12,7 +12,7 @@ import (
 
 func main() {
 	// os.Setenv("EBITENGINE_GRAPHICS_LIBRARY", "opengl")
-	// zerolog.SetGlobalLevel(zerolog.TraceLevel)
+	// zerolog.SetGlobalLevel(zerolog.DebugLevel)
 	zerolog.SetGlobalLevel(zerolog.WarnLevel)
 
 	log.Trace().Str("function", "main").Msg("Started PDFScroller")

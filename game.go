@@ -91,11 +91,21 @@ func cacheImages(f *os.File, pageSelections []string, offset int64) ([]*ebiten.I
 
 		if height > maxHeight {
 			// Find the scale to keep aspect ratio
-			scale := float64(height / maxHeight)
+			scale := float64(maxHeight) / float64(height)
 
-			scaledWidth := uint(math.Ceil(float64(width) * scale))
+			scaledWidth := uint(math.Floor(float64(width) * scale))
 
 			img = resize.Resize(scaledWidth, uint(maxHeight), img, resize.NearestNeighbor)
+
+			log.
+				Debug().
+				Str("function", "cacheImages").
+				Float64("scale", scale).
+				Uint("scaledWidth", scaledWidth).
+				Int("maxHeight", maxHeight).
+				Int("height", height).
+				Int("width", width).
+				Msg("Resized")
 		}
 
 		gameImages[v.Int()-1-offset] = ebiten.NewImageFromImage(img)
@@ -314,6 +324,8 @@ func (g *Game) Update() error {
 	scroll := true
 
 	if g.speed > 0 {
+
+		bounds := pageOneHeight - float64(screenHeight)
 		if pageOneYAbs >= pageOneHeight {
 			// Shift pageTwo into pageOne when we have finished reading pageOne
 			g.pages[0] = pageTwo
@@ -326,20 +338,25 @@ func (g *Game) Update() error {
 				Float64("pageOneYAbs", pageOneYAbs).
 				Float64("pageOneHeight", pageOneHeight).
 				Msg("Shifted pageTwo into pageOne")
-		} else if pageOneYAbs >= float64(pageOneHeight-screenHeight) {
+		} else if pageOneYAbs >= bounds {
 			// Pre-load the next image if we are getting close to it which we define as one 'screenHeight' away, assuming pageHeight > screenHeight
 			nextPosition := pageOne.position + 1
 
 			// Only try and continue if the next position is valid and we haven't already set a next page
 			// We shift out pageTwo in the above condition so we know we can gate it by nil
 			if pageTwo == nil && nextPosition < g.maxImages {
-				// Start the new page just underneath the current page i.e.
-				// at +screenHeight
-				delta := 0.
+				// Start the new page just underneath the current page
+				// We first need to calculate the deltas
+				// First, the scroll speed * 1 tick
+				delta := -g.speed
+				// Second, the zoom factor
 				if g.zoom != 1.0 {
 					delta = (1 - g.zoom) * screenHeight
 				}
-				// TODO: Account for scroll velocity
+				// Third, any overscroll
+				scrollDelta := pageOneYAbs - bounds
+				delta -= scrollDelta
+
 				g.pages[1] = &GamePage{
 					// y:        float64(g.images[nextPosition].Bounds().Size().Y),
 					y:        screenHeight + delta,
@@ -355,6 +372,7 @@ func (g *Game) Update() error {
 					Float64("pageOneYAbs", pageOneYAbs).
 					Float64("bounds", float64(pageOneHeight-screenHeight)).
 					Float64("delta", delta).
+					Float64("scrollDelta", scrollDelta).
 					Msg("Appending a new page to the bottom as we have hit the boundary")
 			} else if nextPosition == g.maxImages && pageOneYAbs+screenHeight >= float64(pageOneHeight) {
 				scroll = false
@@ -390,11 +408,11 @@ func (g *Game) Update() error {
 			g.pages[1] = pageOne
 			g.pages[1].y = 0
 
-			delta := 0.
+			delta := g.speed
 			if g.zoom != 1.0 {
 				delta = (1 - g.zoom) * screenHeight
 			}
-			// TODO: Account for scroll velocity
+
 			g.pages[0] = &GamePage{
 				y:        -float64(g.images[prevPosition].Bounds().Size().Y) - delta,
 				position: prevPosition,
@@ -481,13 +499,13 @@ func (g *Game) Draw(screen *ebiten.Image) {
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
-	log.
-		Info().
-		Str("function", "Layout").
-		Int("outsideWidth", outsideWidth).
-		Int("outsideHeight", outsideHeight).
-		Int("screenWidth", screenWidth).
-		Int("screenHeight", screenHeight).
-		Msg("Called layout")
+	// log.
+	// 	Info().
+	// 	Str("function", "Layout").
+	// 	Int("outsideWidth", outsideWidth).
+	// 	Int("outsideHeight", outsideHeight).
+	// 	Int("screenWidth", screenWidth).
+	// 	Int("screenHeight", screenHeight).
+	// 	Msg("Called layout")
 	return screenWidth, screenHeight
 }
